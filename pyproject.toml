@@ -28,9 +28,11 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
+# Memory Bank adapter. google-cloud-agentplatform pulls in google-genai itself.
+# The adapter also runs on the older google-cloud-aiplatform, which it falls
+# back to when agentplatform is absent.
 vertex = [
-    "google-cloud-aiplatform",
-    "google-genai",
+    "google-cloud-agentplatform",
 ]
 
 # The tree is flat: five top-level modules, no package directory. Without this

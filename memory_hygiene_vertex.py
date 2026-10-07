@@ -13,18 +13,25 @@ Verification status, read this before you deploy anything:
     client and lazy default), ``update`` (create, and delete then create),
     ``all_records``, ``retrieve``, ``generate``, ``delete`` and an
     ``audit_store`` pass, with every structured field read back intact. The
-    transcript is in ``RESULTS.md``. That is one run on one SDK version, not a
-    support guarantee, and the Memory Bank surface is still moving.
+    transcript is in ``RESULTS.md``.
+
+    After the move to the Agent Platform SDK, the same round trip was run
+    again on 7 October 2026: with google-cloud-agentplatform 2.3.0 alone, on
+    a bank made by ``memory_banks.create()``, for both an injected
+    ``agentplatform.Client`` and lazy default construction; and with
+    google-cloud-aiplatform 2.4.0, for an injected ``vertexai.Client`` on
+    the older ``agent_engines.memories`` surface. All passed. These are single
+    runs on single SDK versions, not a support guarantee, and the Memory Bank
+    surface is still moving.
 
     The first release of this file had never been run live and could not
     write at all, because its unit tests used a fake that accepted any
     argument. The fake in ``test_vertex_adapter.py`` is now strict, and checks
-    its signatures and config fields against the installed SDK when the SDK
-    is importable.
+    its signatures and config fields against each installed SDK.
 
 Design notes:
     The Google SDK is imported lazily, inside a helper, never at module import
-    time. Importing this module on a machine with no ``google-cloud-aiplatform``
+    time. Importing this module on a machine with no Memory Bank SDK
     installed is safe and does not raise. The error is raised only when the
     class is instantiated without an injected client or transport.
 
@@ -60,10 +67,10 @@ Known gaps between the Memory Bank API and the ``MemoryRecord`` model:
        ``entity``, ``relation``, ``value``, ``fact_class``, ``source_session``
        and ``merged_from`` have no native home, so the adapter stores them in
        custom metadata on write and reconstructs them on read. Memories
-       produced by ``generate_memories`` carry no such metadata and fall back
+       produced by ``memories.generate`` carry no such metadata and fall back
        to a documented convention.
     5. Scope is not a filter on list. ``scope`` is an immutable map on each
-       memory, limited to a small number of entries. ``list_memories`` is
+       memory, limited to a small number of entries. ``memories.list`` is
        filtered with an EBNF filter string whose support for scope equality is
        not something this adapter relies on, so scope matching is applied
        client side after listing.
@@ -92,7 +99,7 @@ __all__ = [
 _LOGGER = logging.getLogger(__name__)
 
 #: Relation used when a memory carries no ``mh_relation`` metadata, which is
-#: the case for every memory produced by ``generate_memories``.
+#: the case for every memory produced by ``memories.generate``.
 DEFAULT_RELATION = "fact"
 
 #: Fact class used when a memory carries no ``mh_fact_class`` metadata. This
@@ -115,17 +122,23 @@ METADATA_KEYS: Tuple[str, ...] = (
 )
 
 _SDK_INSTALL_HINT = (
-    "The Vertex AI SDK is not importable, so VertexMemoryBankStore cannot "
-    "build a client. Either install the optional dependency from your clone of "
-    'the repo, pip install -e ".[vertex]", or pip install google-cloud-aiplatform, '
-    "or pass an already built client with client=... or an object exposing the "
-    "Memory Bank methods with transport=... (that is how the unit tests run "
-    "with no SDK and no network)."
+    "Neither the Agent Platform SDK (agentplatform) nor the older Vertex AI SDK "
+    "(vertexai) is importable, so VertexMemoryBankStore cannot build a client. "
+    'Either install the optional dependency from your clone of the repo, pip '
+    'install -e ".[vertex]", or pip install google-cloud-agentplatform, or pass '
+    "an already built client with client=... or an object exposing the Memory "
+    "Bank methods with transport=... (that is how the unit tests run with no "
+    "SDK and no network)."
 )
+
+#: The Memory Bank verbs this adapter calls. Both SDKs expose them with the
+#: same keyword only signatures, on ``agentplatform.Client().memory_banks.memories``
+#: and on the older ``vertexai.Client().agent_engines.memories``.
+MEMORY_VERBS: Tuple[str, ...] = ("create", "list", "retrieve", "delete", "generate")
 
 
 class MemoryBankSDKNotAvailableError(RuntimeError):
-    """Raised when the Vertex AI SDK is needed but cannot be imported."""
+    """Raised when a Memory Bank SDK is needed but none can be imported."""
 
 
 def _attr(obj: Any, key: str, default: Any = None) -> Any:
@@ -256,9 +269,9 @@ class VertexMemoryBankStore(MemoryStore):
     ===================  ====================================================
     ABC method           Memory Bank call
     ===================  ====================================================
-    ``all_records()``    ``list_memories()``, paged, filtered by scope locally
-    ``update(record)``   ``delete_memory()`` if present, then ``create_memory()``
-    ``delete(id)``       ``delete_memory()``, a missing id is swallowed
+    ``all_records()``    ``memories.list()``, filtered by scope locally
+    ``update(record)``   ``memories.delete()`` if present, then ``memories.create()``
+    ``delete(id)``       ``memories.delete()``, a missing id is swallowed
     ===================  ====================================================
 
     Two Memory Bank calls have no ABC counterpart and are exposed as extra
@@ -295,10 +308,12 @@ class VertexMemoryBankStore(MemoryStore):
                 ``{"user_id": user_id}``. Memory Bank treats scope as an
                 immutable key value map with a small maximum size.
             user_id: Used only to build the default scope.
-            client: An already built SDK client, for example a
-                ``vertexai.Client``. The adapter uses ``client.agent_engines``
-                when that attribute exists, otherwise the object itself.
-            transport: Any object exposing the Memory Bank methods directly.
+            client: An already built SDK client. For an
+                ``agentplatform.Client`` the adapter uses
+                ``client.memory_banks.memories``, for an older
+                ``vertexai.Client`` it uses ``client.agent_engines.memories``.
+            transport: Any object exposing the Memory Bank verbs in
+                :data:`MEMORY_VERBS` directly.
                 This is the injection point used by the unit tests, which run
                 with no SDK and no network.
             naive_utc_timestamps: Convert aware API timestamps to naive UTC so
@@ -307,7 +322,7 @@ class VertexMemoryBankStore(MemoryStore):
 
         Raises:
             MemoryBankSDKNotAvailableError: If neither ``client`` nor
-                ``transport`` was given and the Vertex AI SDK cannot be
+                ``transport`` was given and no Memory Bank SDK can be
                 imported.
         """
         self.project = project
@@ -316,44 +331,73 @@ class VertexMemoryBankStore(MemoryStore):
         self.scope: Dict[str, str] = dict(scope) if scope else {"user_id": user_id}
         self.naive_utc_timestamps = naive_utc_timestamps
 
+        #: Which Memory Bank surface this store talks to, for logs and tests.
+        self.surface = "injected transport"
         if transport is not None:
             self._api = transport
         elif client is not None:
-            self._api = getattr(client, "agent_engines", client)
+            self._api, self.surface = self._memories_surface(client)
         else:
-            self._api = self._build_default_api()
+            self._api, self.surface = self._build_default_api()
+        _LOGGER.info("VertexMemoryBankStore using %s", self.surface)
 
         # Maps a short record id back to the full Memory Bank resource name,
-        # which delete_memory needs. Populated by every read.
+        # which memories.delete needs. Populated by every read.
         self._resource_names: Dict[str, str] = {}
 
     # -- construction -------------------------------------------------------
 
-    def _build_default_api(self) -> Any:
-        """Import the Vertex AI SDK lazily and return the Memory Bank surface.
-
-        The import lives here, not at module top level, so that importing this
-        module never fails on a machine without the SDK.
+    @staticmethod
+    def _memories_surface(client: Any) -> Tuple[Any, str]:
+        """Find the Memory Bank verbs on an already built client.
 
         Returns:
-            The ``agent_engines`` surface of a freshly built client.
+            ``(surface, description)``. An ``agentplatform.Client`` exposes the
+            verbs on ``memory_banks.memories``, an older ``vertexai.Client`` on
+            ``agent_engines.memories``. Anything else is used as is.
+        """
+        memories = getattr(getattr(client, "memory_banks", None), "memories", None)
+        if memories is not None:
+            return memories, "agentplatform memory_banks.memories"
+        memories = getattr(getattr(client, "agent_engines", None), "memories", None)
+        if memories is not None:
+            return memories, "vertexai agent_engines.memories (deprecated SDK)"
+        return client, "injected client %s" % type(client).__name__
+
+    def _build_default_api(self) -> Tuple[Any, str]:
+        """Import an SDK lazily and return its Memory Bank surface.
+
+        Prefers the Agent Platform SDK (``google-cloud-agentplatform``) and
+        falls back to the deprecated Vertex AI SDK (``google-cloud-aiplatform``)
+        when only that is installed. The imports live here, not at module top
+        level, so that importing this module never fails without an SDK.
+
+        Returns:
+            ``(surface, description)``, see :meth:`_memories_surface`.
 
         Raises:
-            MemoryBankSDKNotAvailableError: If the SDK cannot be imported or
+            MemoryBankSDKNotAvailableError: If neither SDK can be imported, or
                 the client cannot be built.
         """
         try:
-            import vertexai  # pylint: disable=import-outside-toplevel
-        except ImportError as exc:
-            raise MemoryBankSDKNotAvailableError(_SDK_INSTALL_HINT) from exc
+            import agentplatform as sdk  # pylint: disable=import-outside-toplevel
+        except ImportError:
+            try:
+                import vertexai as sdk  # pylint: disable=import-outside-toplevel
+            except ImportError as exc:
+                raise MemoryBankSDKNotAvailableError(_SDK_INSTALL_HINT) from exc
+            _LOGGER.warning(
+                "agentplatform is not installed, falling back to the deprecated "
+                "vertexai SDK. pip install google-cloud-agentplatform to move over."
+            )
         try:
-            client = vertexai.Client(project=self.project, location=self.location)
-        except Exception as exc:  # pragma: no cover, needs the real SDK
+            client = sdk.Client(project=self.project, location=self.location)
+        except Exception as exc:  # pragma: no cover, needs a real SDK
             raise MemoryBankSDKNotAvailableError(
-                "The Vertex AI SDK is installed but building a client for "
-                "project=%r location=%r failed: %s" % (self.project, self.location, exc)
+                "The %s SDK is installed but building a client for project=%r "
+                "location=%r failed: %s" % (sdk.__name__, self.project, self.location, exc)
             ) from exc
-        return getattr(client, "agent_engines", client)
+        return self._memories_surface(client)
 
     @property
     def engine_name(self) -> str:
@@ -370,8 +414,7 @@ class VertexMemoryBankStore(MemoryStore):
         """Invoke one Memory Bank method on the injected or built surface.
 
         Args:
-            method_name: One of ``generate_memories``, ``retrieve_memories``,
-                ``create_memory``, ``list_memories``, ``delete_memory``.
+            method_name: One of :data:`MEMORY_VERBS`.
             **kwargs: Passed straight through to the method.
 
         Returns:
@@ -411,7 +454,7 @@ class VertexMemoryBankStore(MemoryStore):
         """Translate one Memory Bank memory into a :class:`MemoryRecord`.
 
         Fields the adapter wrote itself are recovered from custom metadata.
-        Memories created by ``generate_memories`` carry no such metadata, so
+        Memories created by ``memories.generate`` carry no such metadata, so
         the whole ``fact`` string becomes ``value`` and the relation falls back
         to :data:`DEFAULT_RELATION`.
 
@@ -422,8 +465,8 @@ class VertexMemoryBankStore(MemoryStore):
             The translated record. ``retrieval_count`` and
             ``last_retrieved_at`` are always ``None`` on this backend.
         """
-        # retrieve_memories returns each hit wrapped as {"memory": {...}} with
-        # the similarity distance alongside it, list_memories returns the
+        # memories.retrieve returns each hit wrapped as {"memory": {...}} with
+        # the similarity distance alongside it, memories.list returns the
         # memory directly. Unwrap so both paths share one translation.
         inner = _attr(memory, "memory", None)
         if inner is not None and _attr(memory, "fact", None) is None:
@@ -490,14 +533,14 @@ class VertexMemoryBankStore(MemoryStore):
         return record
 
     def record_to_memory_kwargs(self, record: MemoryRecord) -> Dict[str, Any]:
-        """Translate a :class:`MemoryRecord` into ``create_memory`` arguments.
+        """Translate a :class:`MemoryRecord` into ``memories.create`` arguments.
 
         Args:
             record: The record to write.
 
         Returns:
             A kwargs dict with ``name``, ``fact``, ``scope`` and ``config``.
-            Custom metadata is not a top level argument of ``create_memory``.
+            Custom metadata is not a top level argument of ``memories.create``.
             It is a field of the config, and every value is typed, so each
             string is wrapped as ``{"string_value": ...}``.
         """
@@ -540,7 +583,7 @@ class VertexMemoryBankStore(MemoryStore):
     def all_records(self) -> List[MemoryRecord]:
         """Return every record in this store's scope.
 
-        Pages through ``list_memories`` and filters by scope client side, see
+        Pages through ``memories.list`` and filters by scope client side, see
         gap 5 in the module docstring.
 
         Returns:
@@ -566,7 +609,7 @@ class VertexMemoryBankStore(MemoryStore):
         """
         if record.id and self._lookup_resource_name(record.id):
             self.delete(record.id)
-        created = self._call("create_memory", **self.record_to_memory_kwargs(record))
+        created = self._call("create", **self.record_to_memory_kwargs(record))
         # The SDK returns a long running operation. Its own ``name`` is the
         # operation's, the memory is under ``response``, so read that first.
         new_name = str(_attr(_attr(created, "response", None), "name", "") or "")
@@ -584,7 +627,7 @@ class VertexMemoryBankStore(MemoryStore):
         name = self._lookup_resource_name(record_id)
         if name is None:
             return
-        self._call("delete_memory", name=name)
+        self._call("delete", name=name)
         self._resource_names.pop(record_id, None)
         self._resource_names.pop(name.rsplit("/", 1)[-1], None)
 
@@ -615,7 +658,7 @@ class VertexMemoryBankStore(MemoryStore):
         }
         if query is not None:
             kwargs["similarity_search_params"] = {"search_query": query, "top_k": top_k}
-        response = self._call("retrieve_memories", **kwargs)
+        response = self._call("retrieve", **kwargs)
         return [self.memory_to_record(memory) for memory in self._iter_memories(response)]
 
     def generate(
@@ -647,7 +690,7 @@ class VertexMemoryBankStore(MemoryStore):
         if vertex_session_source is not None:
             kwargs["vertex_session_source"] = vertex_session_source
         kwargs.update(extra)
-        return self._call("generate_memories", **kwargs)
+        return self._call("generate", **kwargs)
 
     # -- internals ----------------------------------------------------------
 
@@ -674,12 +717,12 @@ class VertexMemoryBankStore(MemoryStore):
         return self._resource_names.get(record_id)
 
     def _iter_all_memories(self) -> List[Any]:
-        """Page through ``list_memories`` and return every memory.
+        """Page through ``memories.list`` and return every memory.
 
         The SDK returns a pager that fetches every page itself and carries no
         ``next_page_token``, so with the SDK this loop makes exactly one call.
         The token path serves REST shaped transports, and the token goes inside
-        ``config`` because ``list_memories`` has no top level ``page_token``.
+        ``config`` because ``memories.list`` has no top level ``page_token``.
         """
         memories: List[Any] = []
         page_token: Optional[str] = None
@@ -688,7 +731,7 @@ class VertexMemoryBankStore(MemoryStore):
             kwargs: Dict[str, Any] = {"name": self.engine_name}
             if page_token:
                 kwargs["config"] = {"page_token": page_token}
-            response = self._call("list_memories", **kwargs)
+            response = self._call("list", **kwargs)
             memories.extend(self._iter_memories(response))
             page_token = _attr(response, "next_page_token", None)
             if not page_token or page_token in seen_tokens:
