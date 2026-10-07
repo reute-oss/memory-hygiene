@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "memory-hygiene"
+version = "0.2.0"
+description = "Measure and repair drift in an agent memory store. Pure Python standard library."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Google LLC" }]
+keywords = ["agent", "memory", "drift", "audit", "maintenance"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+# The package is pure standard library by design. There are no runtime
+# dependencies and none should be added.
+dependencies = []
+
+[project.optional-dependencies]
+vertex = [
+    "google-cloud-aiplatform",
+    "google-genai",
+]
+
+# The tree is flat: five top-level modules, no package directory. Without this
+# section a build produces a metadata-only wheel with no code in it.
+[tool.setuptools]
+py-modules = [
+    "memory_hygiene_store",
+    "memory_hygiene_audit",
+    "memory_hygiene_maintain",
+    "memory_hygiene_vertex",
+    "demo_drift",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B"]
+
+[tool.ruff.format]
+quote-style = "double"

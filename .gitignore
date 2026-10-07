@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.demo_runs/
+.scratch/
+.DS_Store
+*.egg-info/
+build/
+demo_store.json
