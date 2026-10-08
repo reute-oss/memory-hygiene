@@ -28,11 +28,13 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-# Memory Bank adapter. google-cloud-agentplatform pulls in google-genai itself.
-# The adapter also runs on the older google-cloud-aiplatform, which it falls
-# back to when agentplatform is absent.
-vertex = [
-    "google-cloud-agentplatform",
+# Memory Bank adapter. The core package is standard library only and runs on
+# Python 3.9. The SDK needs 3.10, so the marker below makes pip skip it on 3.9
+# (pip does not error, the adapter then reports the missing SDK when built).
+# google-cloud-agentplatform pulls in google-genai itself. The adapter also
+# runs on the older google-cloud-aiplatform, which it falls back to.
+memorybank = [
+    "google-cloud-agentplatform; python_version >= '3.10'",
 ]
 
 # The tree is flat: five top-level modules, no package directory. Without this
@@ -42,8 +44,7 @@ py-modules = [
     "memory_hygiene_store",
     "memory_hygiene_audit",
     "memory_hygiene_maintain",
-    "memory_hygiene_vertex",
-    "demo_drift",
+    "memory_hygiene_memorybank",
 ]
 
 [tool.ruff]

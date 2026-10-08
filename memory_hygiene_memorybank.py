@@ -2,7 +2,7 @@
 
 """Agent Platform Memory Bank backend for ``memory_hygiene``.
 
-This module implements :class:`VertexMemoryBankStore`, a
+This module implements :class:`MemoryBankStore`, a
 :class:`memory_hygiene_store.MemoryStore` whose records live in an Agent
 Platform Memory Bank (formerly Vertex AI Agent Engine Memory Bank, renamed
 in April 2026) instead of a local JSON or SQLite file.
@@ -26,7 +26,7 @@ Verification status, read this before you deploy anything:
 
     The first release of this file had never been run live and could not
     write at all, because its unit tests used a fake that accepted any
-    argument. The fake in ``test_vertex_adapter.py`` is now strict, and checks
+    argument. The fake in ``test_memorybank_adapter.py`` is now strict, and checks
     its signatures and config fields against each installed SDK.
 
 Design notes:
@@ -60,7 +60,7 @@ Known gaps between the Memory Bank API and the ``MemoryRecord`` model:
        custom metadata for records it wrote itself, and leaves them ``None``
        for memories the service generated.
     3. No update primitive. The documented surface is create, retrieve, list
-       and delete. :meth:`VertexMemoryBankStore.update` is implemented as
+       and delete. :meth:`MemoryBankStore.update` is implemented as
        delete then create, which is not atomic and which mints a new server
        side resource id for the rewritten memory.
     4. Structure. A Memory Bank memory carries one free text ``fact`` string.
@@ -83,14 +83,14 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
-try:  # package layout: memory_hygiene/vertex.py
+try:  # package layout: memory_hygiene/memorybank.py
     from .store import MemoryRecord, MemoryStore
-except ImportError:  # flat layout: memory_hygiene_vertex.py next to memory_hygiene_store.py
+except ImportError:  # flat layout: memory_hygiene_memorybank.py next to memory_hygiene_store.py
     from memory_hygiene_store import MemoryRecord, MemoryStore
 
 __all__ = [
     "MemoryBankSDKNotAvailableError",
-    "VertexMemoryBankStore",
+    "MemoryBankStore",
     "DEFAULT_RELATION",
     "DEFAULT_FACT_CLASS",
     "METADATA_KEYS",
@@ -123,12 +123,14 @@ METADATA_KEYS: Tuple[str, ...] = (
 
 _SDK_INSTALL_HINT = (
     "Neither the Agent Platform SDK (agentplatform) nor the older Vertex AI SDK "
-    "(vertexai) is importable, so VertexMemoryBankStore cannot build a client. "
+    "(vertexai) is importable, so MemoryBankStore cannot build a client. "
     'Either install the optional dependency from your clone of the repo, pip '
-    'install -e ".[vertex]", or pip install google-cloud-agentplatform, or pass '
+    'install -e ".[memorybank]", or pip install google-cloud-agentplatform, or pass '
     "an already built client with client=... or an object exposing the Memory "
     "Bank methods with transport=... (that is how the unit tests run with no "
-    "SDK and no network)."
+    "SDK and no network). Both SDKs need Python 3.10 or newer. On older Python, "
+    "pip skips the memorybank extra's SDK without an error, which is the usual "
+    "reason for seeing this message after installing it."
 )
 
 #: The Memory Bank verbs this adapter calls. Both SDKs expose them with the
@@ -260,7 +262,7 @@ def _format_timestamp(value: Optional[datetime]) -> Optional[str]:
     return value.isoformat()
 
 
-class VertexMemoryBankStore(MemoryStore):
+class MemoryBankStore(MemoryStore):
     """A ``MemoryStore`` backed by Agent Platform Memory Bank.
 
     The three abstract methods of :class:`memory_hygiene_store.MemoryStore`
@@ -280,8 +282,8 @@ class VertexMemoryBankStore(MemoryStore):
 
     Attributes:
         project: Google Cloud project id.
-        location: Agent Engine location, for example ``"us-central1"``.
-        agent_engine_id: Agent Engine numeric id, or a full resource name.
+        location: Memory Bank location, for example ``"us-central1"``.
+        memory_bank: Memory Bank numeric id, or a full resource name.
         scope: Immutable scope map applied to every write and used to filter
             reads, for example ``{"user_id": "1042"}``.
     """
@@ -290,7 +292,7 @@ class VertexMemoryBankStore(MemoryStore):
         self,
         project: str,
         location: str,
-        agent_engine_id: str,
+        memory_bank: str,
         scope: Optional[Dict[str, str]] = None,
         user_id: str = "default",
         client: Any = None,
@@ -301,9 +303,12 @@ class VertexMemoryBankStore(MemoryStore):
 
         Args:
             project: Google Cloud project id.
-            location: Agent Engine location, for example ``"us-central1"``.
-            agent_engine_id: Agent Engine numeric id, or an already formed
+            location: Memory Bank location, for example ``"us-central1"``.
+            memory_bank: Memory Bank numeric id, or an already formed
                 ``projects/.../locations/.../reasoningEngines/...`` name.
+                A bank made by ``memory_banks.create()`` still carries a
+                ``reasoningEngines/`` resource name, and so does an older
+                Agent Engine instance. Both work.
             scope: Scope map for every read and write. Defaults to
                 ``{"user_id": user_id}``. Memory Bank treats scope as an
                 immutable key value map with a small maximum size.
@@ -327,7 +332,7 @@ class VertexMemoryBankStore(MemoryStore):
         """
         self.project = project
         self.location = location
-        self.agent_engine_id = agent_engine_id
+        self.memory_bank = memory_bank
         self.scope: Dict[str, str] = dict(scope) if scope else {"user_id": user_id}
         self.naive_utc_timestamps = naive_utc_timestamps
 
@@ -339,7 +344,7 @@ class VertexMemoryBankStore(MemoryStore):
             self._api, self.surface = self._memories_surface(client)
         else:
             self._api, self.surface = self._build_default_api()
-        _LOGGER.info("VertexMemoryBankStore using %s", self.surface)
+        _LOGGER.info("MemoryBankStore using %s", self.surface)
 
         # Maps a short record id back to the full Memory Bank resource name,
         # which memories.delete needs. Populated by every read.
@@ -400,14 +405,14 @@ class VertexMemoryBankStore(MemoryStore):
         return self._memories_surface(client)
 
     @property
-    def engine_name(self) -> str:
-        """Full Agent Engine resource name used as the ``name`` argument."""
-        if "/" in self.agent_engine_id:
-            return self.agent_engine_id
+    def memory_bank_name(self) -> str:
+        """Full Memory Bank resource name used as the ``name`` argument."""
+        if "/" in self.memory_bank:
+            return self.memory_bank
         return "projects/%s/locations/%s/reasoningEngines/%s" % (
             self.project,
             self.location,
-            self.agent_engine_id,
+            self.memory_bank,
         )
 
     def _call(self, method_name: str, **kwargs: Any) -> Any:
@@ -560,7 +565,7 @@ class VertexMemoryBankStore(MemoryStore):
             if value is not None:
                 metadata[key] = str(value)
         return {
-            "name": self.engine_name,
+            "name": self.memory_bank_name,
             "fact": self.format_fact(record),
             "scope": dict(self.scope),
             "config": {
@@ -653,7 +658,7 @@ class VertexMemoryBankStore(MemoryStore):
             service side, see gap 1.
         """
         kwargs: Dict[str, Any] = {
-            "name": self.engine_name,
+            "name": self.memory_bank_name,
             "scope": dict(scope) if scope else dict(self.scope),
         }
         if query is not None:
@@ -672,7 +677,7 @@ class VertexMemoryBankStore(MemoryStore):
 
         Args:
             direct_contents_source: Raw conversation turns to extract from.
-            vertex_session_source: An Agent Engine session to extract from.
+            vertex_session_source: An Agent Platform session to extract from.
             scope: Override for the store scope.
             **extra: Forwarded unchanged, for options this adapter does not
                 model, for example a config or wait flag.
@@ -682,7 +687,7 @@ class VertexMemoryBankStore(MemoryStore):
             side, so nothing is translated here.
         """
         kwargs: Dict[str, Any] = {
-            "name": self.engine_name,
+            "name": self.memory_bank_name,
             "scope": dict(scope) if scope else dict(self.scope),
         }
         if direct_contents_source is not None:
@@ -728,7 +733,7 @@ class VertexMemoryBankStore(MemoryStore):
         page_token: Optional[str] = None
         seen_tokens = set()
         while True:
-            kwargs: Dict[str, Any] = {"name": self.engine_name}
+            kwargs: Dict[str, Any] = {"name": self.memory_bank_name}
             if page_token:
                 kwargs["config"] = {"page_token": page_token}
             response = self._call("list", **kwargs)
@@ -765,4 +770,4 @@ class VertexMemoryBankStore(MemoryStore):
             return [response]
 
     def __repr__(self) -> str:
-        return "VertexMemoryBankStore(engine=%r, scope=%r)" % (self.engine_name, self.scope)
+        return "MemoryBankStore(memory_bank=%r, scope=%r)" % (self.memory_bank_name, self.scope)

@@ -1,15 +1,26 @@
 # Memory Bank adapter: where the API did not line up
 
 Artifacts in this folder:
-- `memory_hygiene_vertex.py` : the `VertexMemoryBankStore(MemoryStore)` adapter
-- `test_vertex_adapter.py`   : 48 unittest cases against a STRICT fake transport that
-  mirrors the real SDK signatures and rejects unknown arguments. 46 pass and 2 skip
-  without the SDK installed, all 48 pass with google-cloud-aiplatform 2.4.0.
-  The adapter was additionally verified against a live Memory Bank on 7 October 2026, on one run with google-cloud-aiplatform 2.4.0.
-- `adk_agent.py`             : ADK wiring example (not executed anywhere)
+- `memory_hygiene_memorybank.py` : the `MemoryBankStore(MemoryStore)` adapter. Named
+  `memory_hygiene_vertex.py` and `VertexMemoryBankStore` until 7 October 2026.
+- `test_memorybank_adapter.py`   : 53 unittest cases against a STRICT fake transport that
+  mirrors the real SDK signatures and rejects unknown arguments. Without an SDK, 49
+  pass and 4 skip. With google-cloud-agentplatform 2.3.0 alone, 51 pass and 2 skip.
+  With google-cloud-aiplatform 2.4.0, which ships both SDK modules, all 53 pass.
+- `examples/adk_agent.py`        : ADK wiring example (not executed anywhere)
 
-Status: unit tested against a fake, in process transport only. Never run
-against a live Memory Bank. Confirm the API surface before production use.
+Python: the core package is standard library only and runs on Python 3.9 and up.
+The Memory Bank extra (`pip install -e ".[memorybank]"`) needs Python 3.10 or newer,
+because both Google SDKs do. On 3.9, pip skips the SDK without an error, and the
+adapter reports the missing SDK when it is constructed.
+
+Status: verified against a live Memory Bank on 7 October 2026, one run each:
+- google-cloud-agentplatform 2.3.0, on a bank made by `memory_banks.create()`, with an
+  injected `agentplatform.Client` and with lazy default construction. Audit 96.0.
+- google-cloud-aiplatform 2.4.0, on the older `vertexai` surface. Audit 96.0.
+
+Single runs on single SDK versions, not a support guarantee. Transcripts are in
+`RESULTS.md`.
 
 ## ABC implemented against (memory_hygiene_store.MemoryStore)
 

@@ -1,9 +1,9 @@
 # Disclaimer: This code is provided "as-is" as a demonstration only to illustrate a potential solution. The code does not constitute a Google product or service of any kind, and Google offers no support, warranties, or liability of any kind with its regard. Whoever chooses to use this code accepts all responsibility related to it, including for its implementation, use, and ongoing maintenance. For the avoidance of doubt, this code is not eligible for the Google Open Source Software Vulnerability Rewards Program.
 
 # Requirements and status, please read before running anything here:
-#   This example needs the optional "vertex" extra (google-adk and
-#   google-cloud-aiplatform) and real Google Cloud credentials with access to
-#   an Agent Engine that has a Memory Bank enabled.
+#   This example needs google-adk, the optional "memorybank" extra
+#   (google-cloud-agentplatform, Python 3.10 or newer) and real Google Cloud
+#   credentials with access to a Memory Bank.
 #   This file has NOT been executed in the environment where it was written.
 #   There was no SDK and no network there, so nothing below has been run even
 #   once. Treat it as wiring to copy, not as a verified sample.
@@ -15,7 +15,7 @@ Two separate paths touch the same Memory Bank:
     1. The agent path. ADK reads and writes memories for you through
        ``VertexAiMemoryBankService``. ``PreloadMemoryTool`` pulls the relevant
        memories into context before the model runs.
-    2. The hygiene path. ``VertexMemoryBankStore`` reads the same bank as a
+    2. The hygiene path. ``MemoryBankStore`` reads the same bank as a
        plain ``MemoryStore``, so the audit pass can score duplicates,
        contradictions and TTL overdue records in it.
 
@@ -96,12 +96,12 @@ def audit_the_bank(user_id: str) -> None:
     from datetime import datetime
 
     from memory_hygiene_audit import AuditConfig, audit_store
-    from memory_hygiene_vertex import VertexMemoryBankStore
+    from memory_hygiene_memorybank import MemoryBankStore
 
-    store = VertexMemoryBankStore(
+    store = MemoryBankStore(
         project=PROJECT,
         location=LOCATION,
-        agent_engine_id=AGENT_ENGINE_ID,
+        memory_bank=AGENT_ENGINE_ID,
         scope={"user_id": user_id},
     )
     report = audit_store(store, AuditConfig(now=datetime.utcnow()))

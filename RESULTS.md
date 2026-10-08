@@ -387,13 +387,18 @@ The first measurement in this package taken against a real Google service rather
 simulation. Everything above this section is a seeded local simulation and is labelled as
 such. This is not.
 
-Scope, because it matters: one run, on 7 October 2026, with
-`google-cloud-aiplatform 2.4.0` on the `vertexai` surface. That surface is deprecated in
-favour of `agentplatform`. The migration to the new client is NOT covered here.
+Scope, because it matters. Two SDKs, one run each, all on 7 October 2026:
+
+- `google-cloud-aiplatform 2.4.0` on the older `vertexai` surface, transcript under
+  "The run" below.
+- `google-cloud-agentplatform 2.3.0`, the current SDK, after the adapter moved to it,
+  transcript under "The run on the Agent Platform SDK" below.
+
+Single runs on single SDK versions, not a support guarantee.
 
 ### Why this needed doing
 
-The first release of `VertexMemoryBankStore` could not write to Memory Bank at all. Every
+The first release of `VertexMemoryBankStore` (since renamed `MemoryBankStore`) could not write to Memory Bank at all. Every
 write failed:
 
 ```
@@ -422,12 +427,14 @@ FAILED (failures=6, errors=10, skipped=2)
 AssertionError: "{'string_value': 'user:1042'}" != 'user:1042'
 ```
 
-That first line is the live error, reproduced offline. Test count is now 48, of which 46
-pass and 2 skip without the SDK, and all 48 pass with it installed.
+That first line is the live error, reproduced offline. Test count at that point was 48, of
+which 46 passed and 2 skipped without the SDK. After the move to the Agent Platform SDK it
+is 53, see the next section.
 
 ### The run
 
-Verbatim, with the project number masked.
+On `google-cloud-aiplatform 2.4.0`, before the rename. Verbatim, with the project number
+masked.
 
 ```
 memory-hygiene VertexMemoryBankStore, live round trip
@@ -477,6 +484,66 @@ against Memory Bank today.
 An earlier draft of these notes reported a health score of 92.0. That came from a
 one-record scratch run with unfinished code and is withdrawn. The figure is 96.0, from the
 transcript above.
+
+### The run on the Agent Platform SDK
+
+After the adapter moved to `agentplatform.Client().memory_banks.memories` and was renamed
+`MemoryBankStore`, the same round trip was run with `google-cloud-agentplatform 2.3.0`
+installed alone, on a bank made by `memory_banks.create()`. Verbatim, with the project
+number masked.
+
+```
+memory-hygiene MemoryBankStore, live round trip
+run at (UTC)        : 2026-10-07T14:20:40+00:00
+installed           : google-cloud-agentplatform 2.3.0 | python 3.12.3
+client SDK          : agentplatform
+location            : us-central1
+throwaway memory bank (memory_banks.create): projects/<project-number>/locations/us-central1/reasoningEngines/5180371299377086464
+
+== construction: injected client
+  store.surface: agentplatform memory_banks.memories
+  update() x2, then all_records(): 2 records
+     ('user:ada', 'employer', 'Acme', 'status', '2026-09-07T14:20:44', '2026-11-06T14:20:44', None, ['old-1', 'old-2'], None, None)
+     ('user:ada', 'timezone', 'Europe/Berlin', 'preference', '2026-08-08T14:20:44', None, 's-101', [], None, None)
+  retrieve('Which timezone is Ada in?', top_k=1): [('timezone', 'Europe/Berlin')]
+  audit_store health score: 96.0
+  update() of an existing record (delete then create):
+     ('user:ada', 'employer', 'Acme', 'status', '2026-09-07T14:20:44', '2026-11-06T14:20:44', None, ['old-1', 'old-2'], None, None)
+     ('user:ada', 'timezone', 'Asia/Jerusalem', 'preference', '2026-08-08T14:20:44', None, 's-101', [], None, None)
+  generate() then all_records(), generated memory read back:
+     ('user:live-check-a', 'fact', 'Ada prefers Python.', 'status', '2026-10-07T14:21:00.562208', None, None, [], None, None)
+  delete() every record, then all_records(): 0 records
+
+== construction: default lazy construction
+  store.surface: agentplatform memory_banks.memories
+  update() x2, then all_records(): 2 records
+     ('user:ada', 'employer', 'Acme', 'status', '2026-09-07T14:21:09', '2026-11-06T14:21:09', None, ['old-1', 'old-2'], None, None)
+     ('user:ada', 'timezone', 'Europe/Berlin', 'preference', '2026-08-08T14:21:09', None, 's-101', [], None, None)
+  retrieve('Which timezone is Ada in?', top_k=1): [('timezone', 'Europe/Berlin')]
+  audit_store health score: 96.0
+  update() of an existing record (delete then create):
+     ('user:ada', 'employer', 'Acme', 'status', '2026-09-07T14:21:09', '2026-11-06T14:21:09', None, ['old-1', 'old-2'], None, None)
+     ('user:ada', 'timezone', 'Asia/Jerusalem', 'preference', '2026-08-08T14:21:09', None, 's-101', [], None, None)
+  generate() then all_records(), generated memory read back:
+     ('user:live-check-b', 'fact', 'Ada prefers Python.', 'status', '2026-10-07T14:21:23.849019', None, None, [], None, None)
+  delete() every record, then all_records(): 0 records
+
+cleanup: parent deleted, get() now raises ClientError
+result: PASS
+```
+
+Note the parent resource name. A bank made by `memory_banks.create()` still carries a
+`reasoningEngines/` name, so the `memory_bank` argument takes either a bank or an older
+Agent Engine instance.
+
+The older surface was also re-checked after the move and before the rename: an injected `vertexai.Client` with
+`google-cloud-aiplatform 2.4.0` passed the same round trip, audit 96.0, with the store
+reporting `vertexai agent_engines.memories (deprecated SDK)` as its surface.
+
+Tests after the move: 53. Without an SDK, 49 pass and 4 skip. With
+`google-cloud-agentplatform 2.3.0` alone, 51 pass and 2 skip. With
+`google-cloud-aiplatform 2.4.0`, which ships both SDK modules, all 53 pass. The strict fake
+is checked against the signatures and config fields of each SDK that is installed.
 
 ### Four fixes this produced
 

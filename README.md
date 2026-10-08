@@ -170,11 +170,29 @@ roll back.
 
 ```bash
 python3 test_hygiene.py                      # 48 tests
+python3 test_memorybank_adapter.py           # 53 tests, offline, no SDK needed
 python3 demo_drift.py                        # deterministic, seed 20260930
 ```
 
 The simulation prints byte-identical stdout on every run. There is no wall
 clock and no filesystem state in the output.
+
+## Python versions and the Memory Bank extra
+
+The core package is standard library only and runs on Python 3.9 and up.
+
+The Agent Platform Memory Bank adapter, `MemoryBankStore` in
+`memory_hygiene_memorybank.py`, needs the Google SDK. Nothing is published to
+PyPI, so install the extra from your clone of the repo:
+
+```
+pip install -e ".[memorybank]"
+```
+
+That extra needs Python 3.10 or newer, because the SDK does. On 3.9 pip skips
+the SDK without an error, and the adapter reports the missing SDK when you
+construct it. The adapter was verified against a live Memory Bank on
+7 October 2026, see `RESULTS.md`.
 
 ## Limitations
 

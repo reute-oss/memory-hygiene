@@ -1,7 +1,8 @@
 # VERIFICATION
 
-> **Read Addendum 2 at the end of this file first.** This document is an
-> append-only audit log. Sections above Addendum 2 record what was true at the
+> **Read Addendum 2 at the end of this file first, then Addendum 4.** This
+> document is an append-only audit log. Addendum 4 records the rename of the
+> Memory Bank adapter, so file and class names above it are the old ones. Sections above Addendum 2 record what was true at the
 > time they were written, including headline numbers that a later correctness
 > fix has since changed. Where anything here conflicts with Addendum 2,
 > Addendum 2 is authoritative.
@@ -268,6 +269,8 @@ Full official text with the correct copyright line. PASS.
   library by design and that no runtime dependencies should be added.
 - `[project.optional-dependencies]` declares a `vertex` extra containing
   `google-cloud-aiplatform` and `google-genai`.
+  **SUPERSEDED, see Addendum 4:** the extra is now `memorybank`, containing
+  `google-cloud-agentplatform; python_version >= '3.10'`.
 
 No runtime dependencies, `vertex` optional extra present. PASS.
 
@@ -638,4 +641,86 @@ Still open:
 - Audit and maintain disagree on one edge case: a record past its expiry that
   already carries a future end date is flagged by audit and never acted on.
 - The Memory Bank adapter was verified against a live Memory Bank on 7 October 2026, on one run with google-cloud-aiplatform 2.4.0. See Addendum 3.
+- `VERIFICATION.md` lines 352 and 354 cannot be re-measured without `work.json`.
+
+## Addendum 4: Agent Platform SDK, rename, Python floor
+
+Recorded on 7 October 2026 in the repository, which is authoritative from here.
+Commit 2 moved the adapter to the Agent Platform SDK. Commit 3 renamed it and
+fixed the documentation listed below. Nothing above this addendum was rewritten
+except the SUPERSEDED marker in section 5(e).
+
+### Rename
+
+| before | after |
+|---|---|
+| `memory_hygiene_vertex.py` | `memory_hygiene_memorybank.py` |
+| `VertexMemoryBankStore` | `MemoryBankStore` |
+| constructor argument `agent_engine_id` | `memory_bank` |
+| property `engine_name` | `memory_bank_name` |
+| `test_vertex_adapter.py` | `test_memorybank_adapter.py` |
+| extra `vertex` | `memorybank` |
+
+No compatibility alias. Nothing was published and the repository was private.
+`examples/adk_agent.py` keeps `agent_engine_id` where it is an argument of
+ADK's own `VertexAiMemoryBankService`, which is not this package's API.
+
+### SDK surface
+
+The adapter calls the nested Memory Bank verbs (`create`, `list`, `retrieve`,
+`delete`, `generate`). The flat `*_memory` methods are deprecated on both SDKs.
+Default construction prefers `agentplatform.Client().memory_banks.memories` and
+falls back to `vertexai.Client().agent_engines.memories`, logging which surface
+it took. A bank made by `memory_banks.create()` carries a `reasoningEngines/`
+resource name, so the `memory_bank` argument accepts either kind of parent.
+
+### Packaging
+
+- `py-modules` lists the four library modules. `demo_drift` was removed: it is a
+  repository script, and installing it put it, and the `.demo_runs/` it writes,
+  into site-packages.
+- `requires-python` stays `>=3.9`, because the core is standard library only.
+- The `memorybank` extra is `google-cloud-agentplatform; python_version >= '3.10'`.
+  Both Google SDKs declare Python 3.10 or newer. With this marker, pip on 3.9
+  skips the SDK without an error rather than refusing, and the adapter's
+  missing SDK message says that 3.10 is required.
+
+### Test count
+
+`test_memorybank_adapter.py`: 53. Without an SDK, 49 pass and 4 skip. With
+google-cloud-agentplatform 2.3.0 alone, 51 pass and 2 skip. With
+google-cloud-aiplatform 2.4.0, which ships both SDK modules, all 53 pass.
+`test_hygiene.py`: 48, unchanged.
+
+### Live verification, Agent Platform SDK
+
+Run on 7 October 2026 with google-cloud-agentplatform 2.3.0 alone, on a bank
+made by `memory_banks.create()`, with the renamed code: injected client and
+lazy default construction both PASS, audit 96.0. Transcript in `RESULTS.md`.
+The older surface, an injected `vertexai.Client` on google-cloud-aiplatform
+2.4.0, also passed after the move and before the rename.
+
+One attempt failed before any adapter code ran: `memory_banks.create()` raised
+`500 INTERNAL` while polling its operation. The bank it had started was found,
+deleted and confirmed gone, and the retry passed. Recorded because a clean
+transcript should not hide a failed attempt.
+
+### Documentation fixed in commit 3
+
+- `GAPS.md`: adapter test count 48 corrected to 53. The "never run against a live
+  Memory Bank" status line, which contradicted the line above it, replaced with
+  the verification record. Python note added.
+- `README.md`: adapter tests added to "Running the tests", Python versions and
+  the Memory Bank extra documented.
+- `RESULTS.md`: verification scope widened to both SDKs, the Agent Platform
+  transcript added verbatim. The earlier transcript is untouched.
+- Notebook cells 12 to 14 and `examples/adk_agent.py`: new names, the extra, the
+  Python floor and the widened verification scope.
+
+### Still outstanding
+
+- The maintenance change log is written after the store is rewritten, so a crash
+  partway through leaves changes on disk with no log entries.
+- Audit and maintain disagree on one edge case: a record past its expiry that
+  already carries a future end date is flagged by audit and never acted on.
 - `VERIFICATION.md` lines 352 and 354 cannot be re-measured without `work.json`.
