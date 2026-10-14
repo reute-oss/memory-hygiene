@@ -3,6 +3,9 @@
 Measure and repair drift in an agent memory store. Pure Python standard
 library, no dependencies, drops into any codebase.
 
+Companion code for the article on Medium:
+[Your agent's memory is drifting, and your dashboards look fine](https://medium.com/@reute/your-agents-memory-is-drifting-and-your-dashboards-look-fine-4ee1812868c7).
+
 ## Disclaimer
 
 Disclaimer: This code is provided "as-is" as a demonstration only to illustrate a potential solution. The code does not constitute a Google product or service of any kind, and Google offers no support, warranties, or liability of any kind with its regard. Whoever chooses to use this code accepts all responsibility related to it, including for its implementation, use, and ongoing maintenance. For the avoidance of doubt, this code is not eligible for the Google Open Source Software Vulnerability Rewards Program.
